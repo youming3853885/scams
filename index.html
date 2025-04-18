@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>網站詐騙檢測工具</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- 頁面1: 首頁/輸入頁面 -->
+        <section id="page-home" class="page active">
+            <div class="hero">
+                <h1><i class="fas fa-shield-alt"></i> 網站詐騙檢測工具</h1>
+                <p>輸入網址，檢測潛在詐騙風險</p>
+                <div id="error-message" class="error-message"></div>
+                <div class="search-box">
+                    <input type="text" id="url-input" placeholder="請輸入或貼上網址...">
+                    <button id="scan-button" onclick="goToLoading()">
+                        <i class="fas fa-search"></i> 立即檢測
+                    </button>
+                </div>
+                <div class="features">
+                    <div class="feature">
+                        <i class="fas fa-microscope"></i>
+                        <h3>AI智能分析</h3>
+                        <p>使用先進AI技術分析網站內容</p>
+                    </div>
+                    <div class="feature">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <h3>詐騙標記</h3>
+                        <p>直觀標示可疑詐騙內容</p>
+                    </div>
+                    <div class="feature">
+                        <i class="fas fa-chart-pie"></i>
+                        <h3>風險評估</h3>
+                        <p>量化詐騙風險百分比</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 頁面2: 載入中 -->
+        <section id="page-loading" class="page">
+            <div class="loading-container">
+                <div class="spinner">
+                    <i class="fas fa-spinner fa-spin"></i>
+                </div>
+                <h2>分析中...</h2>
+                <p>正在掃描網站並進行詐騙風險評估</p>
+                <div class="progress-bar">
+                    <div class="progress"></div>
+                </div>
+                <div class="status">正在獲取網站資訊...</div>
+            </div>
+        </section>
+
+        <!-- 頁面3: 結果頁面 -->
+        <section id="page-results" class="page">
+            <div class="results-container">
+                <div class="result-header">
+                    <h2>詐騙檢測結果</h2>
+                    <div class="website-info">
+                        <span id="website-url">https://example.com</span>
+                        <span class="scan-time">掃描時間: <span id="scan-time">2023-05-15 15:30</span></span>
+                    </div>
+                </div>
+                
+                <div class="result-content">
+                    <div class="screenshot-container">
+                        <h3>網站截圖</h3>
+                        <div class="screenshot">
+                            <img id="website-screenshot" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjVmNWY1Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udQlzaXplPSIyMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgZmlsbD0iIzljOWM5YyI+5qqU6LyZ6KiI5rig5Lit4oCm4oCmPC90ZXh0Pjwvc3ZnPg==" alt="網站截圖">
+                        </div>
+                    </div>
+                    
+                    <div class="scam-analysis">
+                        <h3>詐騙風險分析</h3>
+                        <div class="chart-container">
+                            <canvas id="scam-chart"></canvas>
+                        </div>
+                        <div class="scam-score">
+                            <span class="score-label">詐騙風險分數</span>
+                            <span id="score-value" class="high-risk">78</span>
+                        </div>
+                        <div class="scam-features">
+                            <!-- 將由JavaScript動態填充詐騙特徵 -->
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="action-buttons">
+                    <button id="back-button" onclick="goToHome()">
+                        <i class="fas fa-arrow-left"></i> 返回
+                    </button>
+                    <button id="share-button">
+                        <i class="fas fa-share-alt"></i> 分享結果
+                    </button>
+                    <button id="report-button">
+                        <i class="fas fa-flag"></i> 回報網站
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 頁面4: 詳細分析頁面 -->
+        <section id="page-details" class="page">
+            <div class="details-container">
+                <div class="details-header">
+                    <h2>詳細風險分析</h2>
+                    <button class="back-to-results" onclick="goToResults()">
+                        <i class="fas fa-arrow-left"></i> 返回結果
+                    </button>
+                </div>
+                
+                <div class="details-content">
+                    <!-- 將由JavaScript動態填充詳細風險卡片 -->
+                </div>
+                
+                <div class="tips-section">
+                    <h3><i class="fas fa-lightbulb"></i> 安全建議</h3>
+                    <ul>
+                        <!-- 將由JavaScript動態填充安全建議列表 -->
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- 頁腳 -->
+        <footer class="footer">
+            <p>網站詐騙檢測工具 &copy; 2025- 使用AI技術幫助用戶識別可能的詐騙網站</p>
+            <p class="made-by">@Made by Emma</p>
+            <p><small>本工具僅供參考，請始終保持警覺，遵循網絡安全最佳實踐。</small></p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 
