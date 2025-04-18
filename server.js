@@ -151,7 +151,7 @@ async function analyzeFraudRisk(url, content, metadata) {
   try {
     // 使用 OpenAI 進行詐騙風險分析
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-3.5-turbo",
       messages: [
         {
           role: "system",
@@ -263,7 +263,7 @@ async function identifySuspiciousAreas(screenshot, content, analysis) {
     // 使用 OpenAI 視覺分析來標記可疑區域
     const indicators = analysis.indicators.join(", ");
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-3.5-turbo",
       messages: [
         {
           role: "system",
