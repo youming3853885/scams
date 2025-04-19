@@ -20,6 +20,7 @@ const SSL_KEY_PATH = process.env.SSL_KEY_PATH || './certs/key.pem';
 // API配置
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4-turbo';
+const API_TIMEOUT = parseInt(process.env.API_TIMEOUT || '60000');
 
 // 代理配置
 const USE_PROXY = process.env.USE_PROXY === 'true';
@@ -219,6 +220,9 @@ const isValidAPIKey = validateAPIKey();
 
 // 掃描網站 API 端點
 app.post('/api/scan', async (req, res) => {
+  const requestId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+  activeRequests++;
+  
   try {
     const { url } = req.body;
     if (!url) {
@@ -229,35 +233,129 @@ app.post('/api/scan', async (req, res) => {
     if (ENABLE_CACHE) {
       const cacheKey = `scan:${url}`;
       if (cache[cacheKey] && cache[cacheKey].expiry > Date.now()) {
-        logger.info(`從快取返回分析: ${url}`);
+        logger.info(`[${requestId}] 從快取返回分析: ${url}`);
+        activeRequests--;
         return res.json(cache[cacheKey].data);
       }
     }
 
     // 檢查並發請求數
-    if (activeRequests >= MAX_CONCURRENT_REQUESTS) {
+    if (activeRequests > MAX_CONCURRENT_REQUESTS) {
       // 將請求添加到隊列中
+      logger.info(`[${requestId}] 已達到最大並發請求數，添加到隊列`);
       return new Promise((resolve, reject) => {
         requestQueue.push(() => {
-          processScanRequest(url, req, res)
-            .then(resolve)
-            .catch(reject);
+          // 使用單獨的requestId
+          const queuedRequestId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+          logger.info(`[${queuedRequestId}] 從隊列中處理請求: ${url}`);
+          
+          processScanRequest(url, queuedRequestId)
+            .then(result => {
+              handleScanResult(result, url, queuedRequestId, res);
+              resolve();
+            })
+            .catch(error => {
+              handleScanError(error, queuedRequestId, res);
+              reject(error);
+            })
+            .finally(() => {
+              activeRequests--;
+              processNextQueueItem();
+            });
         });
       });
     }
 
-    await processScanRequest(url, req, res);
-
+    // 直接處理請求
+    const result = await processScanRequest(url, requestId);
+    handleScanResult(result, url, requestId, res);
   } catch (error) {
-    logger.error(`掃描失敗: ${error.message}`, { stack: error.stack });
-    res.status(500).json({ error: '掃描過程中發生錯誤', details: error.message });
+    handleScanError(error, requestId, res);
+  } finally {
+    activeRequests--;
+    processNextQueueItem();
   }
 });
 
+// 處理掃描結果
+function handleScanResult(result, url, requestId, res) {
+  // 加工返回結果
+  const processedResult = {
+    ...result,
+    screenshot: result.screenshot ? `data:image/jpeg;base64,${result.screenshot}` : null
+  };
+  
+  // 儲存到快取
+  if (ENABLE_CACHE) {
+    const cacheKey = `scan:${url}`;
+    cache[cacheKey] = {
+      data: processedResult,
+      expiry: Date.now() + (CACHE_TTL * 1000)
+    };
+    
+    // 檢查快取大小
+    if (Object.keys(cache).length > MAX_CACHE_ITEMS) {
+      // 移除最舊的項目
+      const oldestKey = Object.keys(cache).sort((a, b) => 
+        cache[a].expiry - cache[b].expiry
+      )[0];
+      if (oldestKey) {
+        delete cache[oldestKey];
+        logger.debug(`[${requestId}] 移除最舊的快取項: ${oldestKey}`);
+      }
+    }
+  }
+  
+  logger.info(`[${requestId}] 成功完成掃描: ${url}`);
+  res.json(processedResult);
+}
+
+// 處理掃描錯誤
+function handleScanError(error, requestId, res) {
+  // 提供更詳細的錯誤信息
+  let statusCode = 500;
+  let errorMessage = '掃描過程中發生錯誤';
+  
+  if (error.message && error.message.includes('無法獲取網站數據')) {
+    statusCode = 400;
+    errorMessage = '無法獲取網站數據，請確認URL是否有效';
+  } else if (error.message && error.message.includes('超時')) {
+    statusCode = 408;
+    errorMessage = '網站加載超時，請稍後再試';
+  } else if (error.message && error.message.includes('name_not_resolved')) {
+    statusCode = 400;
+    errorMessage = '無法解析域名，請檢查URL是否正確';
+  } else if (error.message && error.message.includes('connection_refused')) {
+    statusCode = 503;
+    errorMessage = '連接被拒絕，該網站可能不可用';
+  }
+  
+  // 返回錯誤響應
+  logger.error(`[${requestId}] 掃描失敗: ${errorMessage}`);
+  res.status(statusCode).json({ 
+    error: true,
+    message: errorMessage,
+    details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    timestamp: new Date().toISOString(),
+    requestId
+  });
+  
+  if (error.errorScreenshot) {
+    logger.debug(`[${requestId}] 包含錯誤截圖`);
+  }
+}
+
+// 處理下一個隊列項目
+function processNextQueueItem() {
+  if (requestQueue.length > 0 && activeRequests < MAX_CONCURRENT_REQUESTS) {
+    const nextRequest = requestQueue.shift();
+    nextRequest();
+  }
+}
+
 // 處理單個掃描請求
-async function processScanRequest(url, req, res) {
+async function processScanRequest(url, requestId) {
   activeRequests++;
-  const requestId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
   
   try {
     logger.info(`[${requestId}] 開始掃描網址: ${url}`);
@@ -300,7 +398,7 @@ async function processScanRequest(url, req, res) {
     }
     
     logger.info(`[${requestId}] 掃描完成: ${url}, 風險分數: ${analysis.riskScore}`);
-    res.json(result);
+    return result;
   } catch (error) {
     logger.error(`[${requestId}] 掃描失敗: ${error.message}`, { 
       stack: error.stack,
@@ -323,12 +421,12 @@ async function processScanRequest(url, req, res) {
       errorMessage = '連接被拒絕，該網站可能不可用';
     }
     
-    res.status(statusCode).json({ 
-      success: false,
-      error: errorMessage, 
+    throw {
+      statusCode,
+      errorMessage,
       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
       requestId
-    });
+    };
   } finally {
     activeRequests--;
     
