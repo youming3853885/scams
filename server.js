@@ -8,7 +8,7 @@ const fs = require('fs');
 const winston = require('winston');
 const rateLimit = require('express-rate-limit');
 const https = require('https');
-const { getBrowser } = require('./puppeteer.config');
+const { getBrowser, closeBrowser } = require('./puppeteer.config');
 require('dotenv').config();
 
 // 服務器配置
@@ -258,17 +258,19 @@ app.post('/api/scan', async (req, res) => {
 // 處理單個掃描請求
 async function processScanRequest(url, req, res) {
   activeRequests++;
+  const requestId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+  
   try {
-    logger.info(`開始掃描網址: ${url}`);
+    logger.info(`[${requestId}] 開始掃描網址: ${url}`);
 
     // 1. 獲取網站截圖和內容
-    const { screenshot, content, metadata } = await getWebsiteData(url);
+    const { screenshot, content, metadata } = await getWebsiteData(url, requestId);
     
     // 2. 分析網站詐騙風險
-    const analysis = await analyzeFraudRisk(url, content, metadata);
+    const analysis = await analyzeFraudRisk(url, content, metadata, requestId);
     
     // 3. 獲取截圖上需要標記的區域
-    const markers = await identifySuspiciousAreas(screenshot, content, analysis);
+    const markers = await identifySuspiciousAreas(screenshot, content, analysis, requestId);
     
     // 4. 構建並返回結果
     const result = {
@@ -276,7 +278,8 @@ async function processScanRequest(url, req, res) {
       screenshot: screenshot ? `data:image/jpeg;base64,${screenshot}` : null,
       analysis,
       markers,
-      scanTime: new Date().toISOString()
+      scanTime: new Date().toISOString(),
+      requestId
     };
     
     // 儲存到快取
@@ -297,11 +300,36 @@ async function processScanRequest(url, req, res) {
       }
     }
     
-    logger.info(`掃描完成: ${url}, 風險分數: ${analysis.riskScore}`);
+    logger.info(`[${requestId}] 掃描完成: ${url}, 風險分數: ${analysis.riskScore}`);
     res.json(result);
   } catch (error) {
-    logger.error(`掃描失敗: ${error.message}`, { stack: error.stack });
-    res.status(500).json({ error: '掃描過程中發生錯誤', details: error.message });
+    logger.error(`[${requestId}] 掃描失敗: ${error.message}`, { 
+      stack: error.stack,
+      url: url,
+      requestId: requestId 
+    });
+    
+    // 提供更詳細的錯誤信息
+    let statusCode = 500;
+    let errorMessage = '掃描過程中發生錯誤';
+    
+    if (error.name === 'TimeoutError') {
+      statusCode = 408;
+      errorMessage = '網站加載超時，請稍後再試';
+    } else if (error.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
+      statusCode = 400;
+      errorMessage = '無法解析域名，請檢查URL是否正確';
+    } else if (error.message.includes('net::ERR_CONNECTION_REFUSED')) {
+      statusCode = 503;
+      errorMessage = '連接被拒絕，該網站可能不可用';
+    }
+    
+    res.status(statusCode).json({ 
+      success: false,
+      error: errorMessage, 
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      requestId
+    });
   } finally {
     activeRequests--;
     
@@ -314,17 +342,29 @@ async function processScanRequest(url, req, res) {
 }
 
 // 獲取網站數據（截圖和內容）
-async function getWebsiteData(url) {
+async function getWebsiteData(url, requestId) {
   let browser = null;
   let page = null;
   try {
-    logger.info(`正在開始分析網站: ${url}`);
+    logger.info(`[${requestId}] 正在開始分析網站: ${url}`);
     
-    // 使用配置的 getBrowser 函數而不是直接調用 puppeteer.launch
+    // 使用配置的 getBrowser 函數
     browser = await getBrowser();
 
-    logger.debug('Puppeteer 啟動成功，創建新頁面...');
+    logger.debug(`[${requestId}] Puppeteer 啟動成功，創建新頁面...`);
     page = await browser.newPage();
+    
+    // 設置請求攔截以降低資源使用
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      const resourceType = request.resourceType();
+      // 忽略非必要資源
+      if (['image', 'media', 'font', 'other'].includes(resourceType)) {
+        request.abort();
+      } else {
+        request.continue();
+      }
+    });
     
     // 設置頁面視窗大小
     await page.setViewport({ width: BROWSER_WIDTH, height: BROWSER_HEIGHT });
@@ -337,19 +377,27 @@ async function getWebsiteData(url) {
       await page.setJavaScriptEnabled(false);
     }
     
+    // 監控頁面錯誤
+    page.on('error', err => {
+      logger.error(`[${requestId}] 頁面錯誤: ${err.message}`);
+    });
+    
     // 提高導航超時
-    logger.debug(`正在導航到 ${url}...`);
+    logger.debug(`[${requestId}] 正在導航到 ${url}...`);
     await page.goto(url, { 
-      waitUntil: 'networkidle2', 
+      waitUntil: 'domcontentloaded', 
       timeout: PAGE_LOAD_TIMEOUT 
     });
-    logger.debug('頁面導航完成');
+    logger.debug(`[${requestId}] 頁面導航完成`);
+    
+    // 等待一段時間讓更多內容加載
+    await page.waitForTimeout(2000);
     
     // 獲取截圖
     const screenshot = await page.screenshot({ 
       type: 'jpeg',
       quality: 80, 
-      fullPage: true 
+      fullPage: false
     });
     
     // 提取網頁內容（文本和DOM結構）
@@ -414,18 +462,33 @@ async function getWebsiteData(url) {
       metadata
     };
   } catch (error) {
-    logger.error('獲取網站數據時發生錯誤:', error);
+    logger.error(`[${requestId}] 獲取網站數據時發生錯誤:`, error);
     
     // 記錄更詳細的錯誤信息
     if (error.message) {
-      logger.error('錯誤信息:', error.message);
+      logger.error(`[${requestId}] 錯誤信息:`, error.message);
     }
     if (error.stack) {
-      logger.error('錯誤堆棧:', error.stack);
+      logger.error(`[${requestId}] 錯誤堆棧:`, error.stack);
+    }
+    
+    // 嘗試獲取錯誤截圖（如果頁面已打開）
+    let errorScreenshot = null;
+    if (page) {
+      try {
+        errorScreenshot = await page.screenshot({
+          type: 'jpeg',
+          quality: 70,
+          fullPage: false,
+          encoding: 'base64'
+        });
+      } catch (screenshotError) {
+        logger.error(`[${requestId}] 無法獲取錯誤截圖:`, screenshotError.message);
+      }
     }
     
     return {
-      screenshot: null,
+      screenshot: errorScreenshot,
       content: {
         bodyText: `無法獲取內容: ${error.message}`,
         forms: [],
@@ -441,25 +504,33 @@ async function getWebsiteData(url) {
         keywords: null,
         author: null,
         siteName: null
-      }
+      },
+      error: error.message
     };
   } finally {
     try {
       // 確保資源得到正確釋放
       if (page) await page.close();
-      if (browser) await browser.close();
-      logger.debug('Puppeteer 資源已釋放');
+      if (browser) await closeBrowser(browser);
+      logger.debug(`[${requestId}] Puppeteer 資源已釋放`);
     } catch (closeError) {
-      logger.error('關閉瀏覽器時發生錯誤:', closeError);
+      logger.error(`[${requestId}] 關閉瀏覽器時發生錯誤:`, closeError);
     }
   }
 }
 
 // 分析網站詐騙風險
-async function analyzeFraudRisk(url, content, metadata) {
+async function analyzeFraudRisk(url, content, metadata, requestId) {
   try {
+    logger.info(`[${requestId}] 開始分析詐騙風險: ${url}`);
+    
+    // 檢查內容是否存在錯誤
+    if (content.error) {
+      logger.warn(`[${requestId}] 使用有限內容進行分析，因原始內容獲取失敗: ${content.error}`);
+    }
+    
     // 使用 OpenAI 進行詐騙風險分析
-    const completion = await openai.createChatCompletion({
+    const completionData = {
       model: OPENAI_MODEL,
       messages: [
         {
@@ -510,11 +581,15 @@ async function analyzeFraudRisk(url, content, metadata) {
       ],
       temperature: 0.7,
       max_tokens: 800,
-      response_format: { type: "json_object" },
-      timeout: API_TIMEOUT
-    });
+      response_format: { type: "json_object" }
+    };
+    
+    logger.debug(`[${requestId}] 發送 OpenAI 請求，模型: ${OPENAI_MODEL}`);
+    
+    const completion = await openai.createChatCompletion(completionData);
 
     const analysisResult = JSON.parse(completion.data.choices[0].message.content);
+    logger.info(`[${requestId}] 分析完成，風險分數: ${analysisResult.riskScore || 0}`);
     
     // 為避免結果不符合預期格式的問題，確保所有字段都存在
     return {
@@ -525,11 +600,11 @@ async function analyzeFraudRisk(url, content, metadata) {
       safetyAdvice: analysisResult.safetyAdvice || []
     };
   } catch (error) {
-    logger.error('分析詐騙風險時出錯:', error);
+    logger.error(`[${requestId}] 分析詐騙風險時出錯:`, error);
     
     // 詳細記錄API錯誤
     if (error.response) {
-      logger.error('API響應錯誤:', {
+      logger.error(`[${requestId}] API響應錯誤:`, {
         status: error.response.status,
         statusText: error.response.statusText,
         data: error.response.data
@@ -542,8 +617,10 @@ async function analyzeFraudRisk(url, content, metadata) {
       (error.response && error.response.status === 429) ||
       (error.message && error.message.includes('quota'));
     
-    if (!isQuotaError) {
-      logger.error('非配額錯誤，可能是API密鑰錯誤或請求格式問題');
+    if (isQuotaError) {
+      logger.error(`[${requestId}] API配額不足錯誤`);
+    } else {
+      logger.error(`[${requestId}] 非配額錯誤，可能是API密鑰錯誤或請求格式問題`);
     }
     
     // 返回模擬數據，並標記API問題
@@ -570,10 +647,13 @@ async function analyzeFraudRisk(url, content, metadata) {
 }
 
 // 識別截圖上的可疑區域
-async function identifySuspiciousAreas(screenshot, content, analysis) {
+async function identifySuspiciousAreas(screenshot, content, analysis, requestId) {
   try {
-    // 檢查是否為模擬數據
-    if (analysis.isSimulatedData) {
+    logger.info(`[${requestId}] 開始識別可疑區域`);
+    
+    // 檢查是否為模擬數據或無截圖
+    if (analysis.isSimulatedData || !screenshot) {
+      logger.info(`[${requestId}] 使用模擬標記數據`);
       // 返回模擬的標記數據
       return [
         { top: 20, left: 10, width: 30, height: 5, label: '可疑登錄表單' },
@@ -584,12 +664,15 @@ async function identifySuspiciousAreas(screenshot, content, analysis) {
     
     if (analysis.riskScore < 30) {
       // 低風險網站不標記
+      logger.info(`[${requestId}] 低風險網站，不標記可疑區域`);
       return [];
     }
     
     // 使用 OpenAI 視覺分析來標記可疑區域
     const indicators = analysis.indicators.join(", ");
-    const completion = await openai.createChatCompletion({
+    logger.debug(`[${requestId}] 使用以下指標識別可疑區域: ${indicators}`);
+    
+    const completionData = {
       model: OPENAI_MODEL,
       messages: [
         {
@@ -627,17 +710,23 @@ async function identifySuspiciousAreas(screenshot, content, analysis) {
       ],
       temperature: 0.7,
       max_tokens: 800,
-      response_format: { type: "json_object" },
-      timeout: API_TIMEOUT
-    });
+      response_format: { type: "json_object" }
+    };
+    
+    logger.debug(`[${requestId}] 發送 OpenAI 請求識別可疑區域，模型: ${OPENAI_MODEL}`);
+    
+    const completion = await openai.createChatCompletion(completionData);
 
     try {
       // 嘗試解析返回的JSON響應
       const markersResponse = JSON.parse(completion.data.choices[0].message.content);
-      return Array.isArray(markersResponse) ? markersResponse : 
-             (markersResponse.markers || []);
+      const markers = Array.isArray(markersResponse) ? markersResponse : 
+                     (markersResponse.markers || []);
+      
+      logger.info(`[${requestId}] 成功識別 ${markers.length} 個可疑區域`);
+      return markers;
     } catch (error) {
-      logger.error('解析標記數據時出錯:', error);
+      logger.error(`[${requestId}] 解析標記數據時出錯:`, error);
       
       // 如果解析失敗，生成一些合理的標記
       // 根據分析結果創建1-3個隨機位置的標記
@@ -654,10 +743,11 @@ async function identifySuspiciousAreas(screenshot, content, analysis) {
         });
       }
       
+      logger.info(`[${requestId}] 使用後備標記數據，生成 ${randomMarkers.length} 個標記`);
       return randomMarkers;
     }
   } catch (error) {
-    logger.error('識別可疑區域時出錯:', error);
+    logger.error(`[${requestId}] 識別可疑區域時出錯:`, error);
     // 返回基於分析的簡單標記
     if (analysis.riskScore >= 70) {
       return [
