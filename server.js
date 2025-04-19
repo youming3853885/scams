@@ -58,11 +58,20 @@ app.post('/api/scan', async (req, res) => {
 });
 
 // 獲取網站數據（截圖和內容）
-async function getWebsiteData(url) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+const browser = await puppeteer.launch({
+  headless: "new", // 使用新的 headless 模式，解決警告
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--single-process'
+  ],
+  // 刪除或註釋掉這一行
+  // executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+});
   
   try {
     const page = await browser.newPage();
