@@ -4,9 +4,12 @@
   "description": "網站詐騙檢測工具",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node render-start.js",
     "dev": "nodemon server.js",
-    "postinstall": "node -e \"try { require('fs').mkdirSync('./logs'); } catch (e) { if (e.code !== 'EEXIST') throw e; }\""
+    "build": "echo \"No build step required\"",
+    "postinstall": "node -e \"try { require('fs').mkdirSync('./logs') } catch {}\"",
+    "docker:build": "docker build -t scam-detector .",
+    "docker:run": "docker run -p 3000:3000 scam-detector"
   },
   "keywords": [
     "scam",
@@ -26,6 +29,7 @@
     "express-rate-limit": "^6.7.0",
     "openai": "^3.3.0",
     "puppeteer": "^20.7.4",
+    "puppeteer-core": "^20.7.4",
     "winston": "^3.9.0"
   },
   "devDependencies": {

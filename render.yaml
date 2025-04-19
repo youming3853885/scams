@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: scam-detector
+    env: node
+    plan: free
+    buildCommand: npm install && mkdir -p logs
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RENDER
+        value: true
+      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+        value: true
+      - key: SERVER_PORT
+        value: 3000
+      - key: ENABLE_HTTPS
+        value: false
+      - key: OPENAI_API_KEY
+        sync: false # 這需要在 Render 儀表板中手動設置
+      - key: OPENAI_MODEL
+        value: gpt-4-turbo
+      - key: API_TIMEOUT
+        value: 60000
+      - key: MAX_URLS_PER_DAY
+        value: 100
+      - key: LOG_LEVEL
+        value: info
+      - key: ENABLE_CACHE
+        value: true

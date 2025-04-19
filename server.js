@@ -8,6 +8,7 @@ const fs = require('fs');
 const winston = require('winston');
 const rateLimit = require('express-rate-limit');
 const https = require('https');
+const { getBrowser } = require('./puppeteer.config');
 require('dotenv').config();
 
 // 服務器配置
@@ -242,31 +243,8 @@ async function getWebsiteData(url) {
   try {
     logger.info(`正在開始分析網站: ${url}`);
     
-    const launchOptions = {
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
-        `--window-size=${BROWSER_WIDTH},${BROWSER_HEIGHT}`
-      ],
-      timeout: API_TIMEOUT
-    };
-    
-    // 如果啟用了代理，添加代理設置
-    if (USE_PROXY && PROXY_SERVER) {
-      logger.info(`使用代理服務器: ${PROXY_SERVER}`);
-      launchOptions.args.push(`--proxy-server=${PROXY_SERVER}`);
-      
-      // 如果有代理驗證，設置代理驗證
-      if (PROXY_AUTH_USERNAME && PROXY_AUTH_PASSWORD) {
-        launchOptions.args.push(`--proxy-auth=${PROXY_AUTH_USERNAME}:${PROXY_AUTH_PASSWORD}`);
-      }
-    }
-    
-    browser = await puppeteer.launch(launchOptions);
+    // 使用配置的 getBrowser 函數而不是直接調用 puppeteer.launch
+    browser = await getBrowser();
 
     logger.debug('Puppeteer 啟動成功，創建新頁面...');
     page = await browser.newPage();
