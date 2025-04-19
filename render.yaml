@@ -11,9 +11,7 @@ services:
       - key: RENDER
         value: true
       - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
-        value: true
-      - key: PUPPETEER_EXECUTABLE_PATH
-        value: /usr/bin/google-chrome-stable
+        value: false
       - key: SERVER_PORT
         value: 3000
       - key: ENABLE_HTTPS
@@ -21,7 +19,7 @@ services:
       - key: OPENAI_API_KEY
         sync: false # 這需要在 Render 儀表板中手動設置
       - key: OPENAI_MODEL
-        value: gpt-4-turbo
+        value: gpt-3.5-turbo
       - key: MAX_URLS_PER_DAY
         value: 100
       - key: LOG_LEVEL

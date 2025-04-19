@@ -192,185 +192,386 @@ async function scanWebsite(url) {
     }
 }
 
-// 顯示分析結果
+/**
+ * 顯示分析結果
+ * @param {Object} result - 分析結果對象
+ */
 function displayAnalysisResults(result) {
-    // 更新頁面上的URL
-    document.getElementById('website-url').textContent = result.url;
-    
-    // 更新掃描時間
-    const scanDate = new Date(result.scanTime);
-    const formattedTime = `${scanDate.getFullYear()}-${padZero(scanDate.getMonth() + 1)}-${padZero(scanDate.getDate())} ${padZero(scanDate.getHours())}:${padZero(scanDate.getMinutes())}`;
-    document.getElementById('scan-time').textContent = formattedTime;
-    
-    // 清除任何現有的API警告
-    const existingWarnings = document.querySelectorAll('.api-warning');
-    existingWarnings.forEach(warning => warning.remove());
-    
-    // 檢查是否為模擬數據，並加入更多詳細信息
-    if (result.analysis.isSimulatedData) {
-        // 添加API配額不足的提示
-        const warningBanner = document.createElement('div');
-        warningBanner.className = 'api-warning';
+    try {
+        console.log('顯示分析結果:', result);
         
-        // 根據錯誤類型定制消息
-        let warningMessage = 'API配額不足，暫時顯示模擬數據。實際分析結果可能有所不同。';
-        if (result.analysis.errorType === 'api') {
-            warningMessage = 'API發生錯誤，暫時顯示模擬數據。請聯繫管理員檢查API配置。';
-        }
-        
-        warningBanner.innerHTML = `
-            <i class="fas fa-exclamation-triangle"></i>
-            <span>${warningMessage}</span>
-            <button id="retry-api-btn" class="small-button">重試</button>
-        `;
-        
-        // 添加到結果容器的頂部
-        const resultsContainer = document.querySelector('.results-container');
-        resultsContainer.insertBefore(warningBanner, resultsContainer.firstChild);
-        
-        // 添加重試按鈕事件
-        document.getElementById('retry-api-btn').addEventListener('click', function() {
-            scanWebsite(result.url);
+        // 更新掃描時間
+        const now = new Date();
+        const scanTime = now.toLocaleString('zh-TW', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
         });
-    }
-    
-    // 設置風險分數
-    const riskScore = result.analysis.riskScore;
-    document.getElementById('score-value').textContent = riskScore;
-    
-    // 根據風險分數更新樣式
-    const scoreElement = document.getElementById('score-value');
-    scoreElement.className = '';  // 清除現有的class
-    if (riskScore < 30) {
-        scoreElement.classList.add('low-risk');
-    } else if (riskScore < 70) {
-        scoreElement.classList.add('medium-risk');
-    } else {
-        scoreElement.classList.add('high-risk');
-    }
-    
-    // 創建圓餅圖
-    createScamChart(riskScore);
-    
-    // 更新截圖
-    document.getElementById('website-screenshot').src = result.screenshot;
-    
-    // 清除現有標記
-    document.querySelectorAll('.scam-marker').forEach(marker => {
-        if (!marker.hasAttribute('style')) {
-            marker.remove();
+        document.getElementById('scan-time').textContent = scanTime;
+        
+        // 計算並顯示風險分數
+        const riskScore = Math.round(result.riskScore);
+        document.getElementById('risk-score').textContent = riskScore;
+        
+        // 根據風險分數設置風險級別和顏色
+        let riskLevel, riskColor;
+        if (riskScore >= 80) {
+            riskLevel = '高風險';
+            riskColor = '#e74c3c';
+        } else if (riskScore >= 50) {
+            riskLevel = '中風險';
+            riskColor = '#f39c12';
+        } else if (riskScore >= 20) {
+            riskLevel = '低風險';
+            riskColor = '#3498db';
+        } else {
+            riskLevel = '安全';
+            riskColor = '#2ecc71';
         }
-    });
-    
-    // 添加詐騙標記
-    result.markers.forEach(marker => {
-        addScamMarker(marker.top, marker.left, marker.width, marker.height, marker.label);
-    });
-    
-    // 更新詐騙特徵列表
-    updateScamFeatures(result.analysis);
-    
-    // 更新詳細分析頁面
-    updateDetailedAnalysis(result.analysis);
-}
+        
+        document.getElementById('risk-level').textContent = riskLevel;
+        document.getElementById('risk-level').style.color = riskColor;
+        document.getElementById('risk-score-circle').style.stroke = riskColor;
+        
+        // 計算並設置圓環的填充百分比
+        const circumference = 2 * Math.PI * 42; // 圓的周長
+        const offset = circumference - (riskScore / 100) * circumference;
+        document.getElementById('risk-score-circle').style.strokeDashoffset = offset;
+        
+        // 更新網站信息
+        document.getElementById('website-url').textContent = result.url;
+        document.getElementById('website-url').setAttribute('title', result.url);
+        document.getElementById('website-url').href = result.url;
+        
+        if (result.title) {
+            document.getElementById('website-title').textContent = result.title;
+            document.getElementById('website-title').setAttribute('title', result.title);
+        } else {
+            document.getElementById('website-title').textContent = '無法獲取網站標題';
+        }
 
-// 更新詐騙特徵列表
-function updateScamFeatures(analysis) {
-    const featuresContainer = document.querySelector('.scam-features');
-    featuresContainer.innerHTML = ''; // 清空現有內容
-    
-    // 添加詐騙指標
-    analysis.indicators.slice(0, 3).forEach(indicator => {
-        const feature = document.createElement('div');
-        feature.className = 'scam-feature warning';
-        feature.innerHTML = `
-            <i class="fas fa-exclamation-circle"></i>
-            <span>${indicator}</span>
-        `;
-        featuresContainer.appendChild(feature);
-    });
-    
-    // 添加一些積極的指標（如果有的話）
-    if (analysis.riskScore < 50) {
-        const positiveFeature = document.createElement('div');
-        positiveFeature.className = 'scam-feature';
-        positiveFeature.innerHTML = `
-            <i class="fas fa-check-circle"></i>
-            <span>網站使用安全連接</span>
-        `;
-        featuresContainer.appendChild(positiveFeature);
-    }
-}
+        // 處理截圖顯示
+        const screenshotContainer = document.getElementById('screenshot');
+        screenshotContainer.className = 'screenshot';
+        screenshotContainer.innerHTML = '';
 
-// 添加兩位數格式化函數
-function padZero(num) {
-    return num.toString().padStart(2, '0');
-}
-
-// 創建詐騙風險圓餅圖
-function createScamChart(riskScore) {
-    const ctx = document.getElementById('scam-chart').getContext('2d');
-    
-    // 如果有舊的圖表實例，先銷毀
-    if (window.scamChart) {
-        window.scamChart.destroy();
-    }
-    
-    // 創建新的圖表
-    window.scamChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: ['詐騙風險', '安全指數'],
-            datasets: [{
-                data: [riskScore, 100 - riskScore],
-                backgroundColor: [
-                    riskScore < 30 ? '#2ecc71' : (riskScore < 70 ? '#f39c12' : '#e74c3c'),
-                    '#ecf0f1'
-                ],
-                borderWidth: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            cutout: '70%',
-            plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: {
-                        boxWidth: 15,
-                        padding: 15
-                    }
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            return `${context.label}: ${context.raw}%`;
-                        }
-                    }
+        if (result.screenshot && result.screenshot !== 'error') {
+            // 創建並加載截圖
+            const img = new Image();
+            img.onload = function() {
+                // 清除掃描標記容器
+                document.querySelectorAll('.scam-marker').forEach(marker => marker.remove());
+                
+                // 添加可疑區域標記
+                if (result.suspiciousAreas && result.suspiciousAreas.length > 0) {
+                    displaySuspiciousAreas(result.suspiciousAreas, img.width, img.height);
                 }
-            }
+            };
+            
+            img.onerror = function() {
+                displayScreenshotError('無法加載截圖');
+            };
+            
+            img.src = result.screenshot;
+            screenshotContainer.appendChild(img);
+        } else {
+            displayScreenshotError('無法獲取網站截圖');
         }
+        
+        // 顯示詐騙特徵
+        const scamFeaturesContainer = document.getElementById('scam-features');
+        scamFeaturesContainer.innerHTML = '';
+        
+        if (result.scamFeatures && result.scamFeatures.length > 0) {
+            result.scamFeatures.forEach((feature, index) => {
+                const featureElement = createScamFeatureElement(feature, index);
+                scamFeaturesContainer.appendChild(featureElement);
+            });
+        } else {
+            scamFeaturesContainer.innerHTML = '<div class="no-features">未檢測到明顯詐騙特徵</div>';
+        }
+        
+        // 顯示安全警告
+        const warningsContainer = document.getElementById('warnings');
+        warningsContainer.innerHTML = '';
+        
+        if (result.warnings && result.warnings.length > 0) {
+            result.warnings.forEach(warning => {
+                const warningElement = document.createElement('div');
+                warningElement.className = 'warning';
+                warningElement.textContent = warning;
+                warningsContainer.appendChild(warningElement);
+            });
+        } else {
+            warningsContainer.innerHTML = '<div class="no-warnings">未發現安全警告</div>';
+        }
+        
+        // 更新詳細威脅信息
+        updateThreatDetail('identity-theft', result.identityTheftScore || 0);
+        updateThreatDetail('financial-fraud', result.financialFraudScore || 0);
+        updateThreatDetail('malware-risk', result.malwareScore || 0);
+        updateThreatDetail('privacy-risk', result.privacyRiskScore || 0);
+        
+        // 創建風險分析圖表
+        createRiskChart(result);
+        
+        // 顯示結果頁面
+        showPage('results-page');
+    } catch (error) {
+        console.error('顯示分析結果時發生錯誤:', error);
+        showError('處理分析結果時發生錯誤。請重試。');
+        goToHome();
+    }
+}
+
+/**
+ * 創建詐騙特徵元素
+ * @param {Object} feature - 詐騙特徵對象
+ * @param {Number} index - 索引
+ * @returns {HTMLElement} - 特徵元素
+ */
+function createScamFeatureElement(feature, index) {
+    const featureElement = document.createElement('div');
+    featureElement.className = 'scam-feature';
+    featureElement.dataset.index = index;
+    
+    // 添加圖標
+    const iconElement = document.createElement('div');
+    iconElement.className = 'feature-icon';
+    
+    const icon = document.createElement('i');
+    icon.className = getFeatureIcon(feature.type);
+    iconElement.appendChild(icon);
+    
+    // 添加文本
+    const textElement = document.createElement('div');
+    textElement.className = 'feature-text';
+    textElement.textContent = feature.description;
+    
+    featureElement.appendChild(iconElement);
+    featureElement.appendChild(textElement);
+    
+    // 根據特徵類型添加相應的點擊事件
+    if (feature.areaId !== undefined) {
+        featureElement.addEventListener('mouseenter', () => {
+            highlightSuspiciousArea(feature.areaId);
+        });
+        
+        featureElement.addEventListener('mouseleave', () => {
+            unhighlightSuspiciousAreas();
+        });
+        
+        featureElement.addEventListener('click', () => {
+            scrollToAndFocusArea(feature.areaId);
+        });
+        
+        // 添加指示器，表明可點擊
+        featureElement.classList.add('clickable');
+        const indicator = document.createElement('span');
+        indicator.className = 'clickable-indicator';
+        indicator.innerHTML = '<i class="fas fa-search-location"></i>';
+        indicator.title = '點擊可在截圖中查看此問題';
+        featureElement.appendChild(indicator);
+    }
+    
+    return featureElement;
+}
+
+/**
+ * 根據特徵類型獲取對應的圖標
+ * @param {String} type - 特徵類型
+ * @returns {String} - 圖標類名
+ */
+function getFeatureIcon(type) {
+    const iconMap = {
+        'phishing': 'fas fa-fish',
+        'scam': 'fas fa-exclamation-triangle',
+        'malware': 'fas fa-bug',
+        'spam': 'fas fa-envelope',
+        'suspicious': 'fas fa-question-circle',
+        'redirect': 'fas fa-random',
+        'identity_theft': 'fas fa-id-card',
+        'financial': 'fas fa-money-bill',
+        'privacy': 'fas fa-user-secret',
+        'misleading': 'fas fa-ban',
+        'fake_content': 'fas fa-copy',
+        'urgency': 'fas fa-clock',
+        'poor_security': 'fas fa-unlock',
+        'clickbait': 'fas fa-mouse-pointer'
+    };
+    
+    return iconMap[type] || 'fas fa-exclamation-circle';
+}
+
+/**
+ * 顯示截圖錯誤
+ * @param {String} message - 錯誤信息
+ */
+function displayScreenshotError(message) {
+    const screenshotContainer = document.getElementById('screenshot');
+    screenshotContainer.className = 'screenshot-error';
+    screenshotContainer.innerHTML = `
+        <i class="fas fa-image-slash"></i>
+        <p>${message || '無法獲取網站截圖'}</p>
+    `;
+}
+
+/**
+ * 顯示可疑區域
+ * @param {Array} areas - 可疑區域數組
+ * @param {Number} imgWidth - 圖片寬度
+ * @param {Number} imgHeight - 圖片高度
+ */
+function displaySuspiciousAreas(areas, imgWidth, imgHeight) {
+    const screenshotContainer = document.getElementById('screenshot');
+    const containerWidth = screenshotContainer.offsetWidth;
+    const containerHeight = screenshotContainer.offsetHeight;
+    
+    // 計算縮放比例
+    const scaleX = containerWidth / imgWidth;
+    const scaleY = containerHeight / imgHeight;
+    
+    areas.forEach((area, index) => {
+        // 創建標記元素
+        const marker = document.createElement('div');
+        marker.className = 'scam-marker';
+        marker.dataset.id = index;
+        
+        // 計算標記位置和大小
+        const left = area.x * scaleX;
+        const top = area.y * scaleY;
+        const width = area.width * scaleX;
+        const height = area.height * scaleY;
+        
+        marker.style.left = `${left}px`;
+        marker.style.top = `${top}px`;
+        marker.style.width = `${width}px`;
+        marker.style.height = `${height}px`;
+        
+        // 添加標籤
+        const label = document.createElement('div');
+        label.className = 'marker-label';
+        label.textContent = area.label || `可疑區域 ${index + 1}`;
+        marker.appendChild(label);
+        
+        // 添加點擊事件
+        marker.addEventListener('click', () => {
+            // 切換高亮狀態
+            marker.classList.toggle('highlighted');
+            
+            // 如果有對應的特徵，也高亮顯示
+            highlightMatchingFeature(index);
+        });
+        
+        screenshotContainer.appendChild(marker);
     });
 }
 
-// 動態添加可疑標記
-function addScamMarker(top, left, width, height, label) {
-    const screenshot = document.querySelector('.screenshot');
+/**
+ * 高亮顯示特定的可疑區域
+ * @param {Number} areaId - 區域ID
+ */
+function highlightSuspiciousArea(areaId) {
+    const marker = document.querySelector(`.scam-marker[data-id="${areaId}"]`);
+    if (marker) {
+        marker.classList.add('highlighted');
+    }
+}
+
+/**
+ * 取消高亮顯示所有可疑區域
+ */
+function unhighlightSuspiciousAreas() {
+    document.querySelectorAll('.scam-marker').forEach(marker => {
+        marker.classList.remove('highlighted');
+    });
+}
+
+/**
+ * 高亮顯示匹配的特徵
+ * @param {Number} areaId - 區域ID
+ */
+function highlightMatchingFeature(areaId) {
+    document.querySelectorAll('.scam-feature').forEach(feature => {
+        feature.classList.remove('highlighted');
+    });
     
-    const marker = document.createElement('div');
-    marker.className = 'scam-marker';
-    marker.style.top = `${top}%`;
-    marker.style.left = `${left}%`;
-    marker.style.width = `${width}%`;
-    marker.style.height = `${height}%`;
+    const matchingFeature = document.querySelector(`.scam-feature[data-index="${areaId}"]`);
+    if (matchingFeature) {
+        matchingFeature.classList.add('highlighted');
+        matchingFeature.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
+/**
+ * 滾動到並聚焦特定區域
+ * @param {Number} areaId - 區域ID
+ */
+function scrollToAndFocusArea(areaId) {
+    const marker = document.querySelector(`.scam-marker[data-id="${areaId}"]`);
+    if (marker) {
+        // 獲取截圖容器
+        const screenshotContainer = document.getElementById('screenshot-container');
+        
+        // 滾動到截圖容器
+        screenshotContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        
+        // 高亮顯示標記
+        unhighlightSuspiciousAreas();
+        setTimeout(() => {
+            marker.classList.add('highlighted');
+            // 閃爍效果
+            setTimeout(() => {
+                marker.classList.remove('highlighted');
+                setTimeout(() => {
+                    marker.classList.add('highlighted');
+                }, 200);
+            }, 200);
+        }, 500);
+    }
+}
+
+/**
+ * 更新威脅詳情
+ * @param {String} id - 威脅ID
+ * @param {Number} score - 威脅分數
+ */
+function updateThreatDetail(id, score) {
+    const element = document.getElementById(id);
+    if (!element) return;
     
-    const markerLabel = document.createElement('div');
-    markerLabel.className = 'marker-label';
-    markerLabel.textContent = label;
+    const scoreElement = element.querySelector('.threat-score');
+    const levelElement = element.querySelector('.threat-level');
     
-    marker.appendChild(markerLabel);
-    screenshot.appendChild(marker);
+    // 更新分數
+    scoreElement.textContent = Math.round(score);
+    
+    // 更新級別
+    let level, color;
+    if (score >= 80) {
+        level = '嚴重';
+        color = '#e74c3c';
+    } else if (score >= 50) {
+        level = '中等';
+        color = '#f39c12';
+    } else if (score >= 20) {
+        level = '輕微';
+        color = '#3498db';
+    } else {
+        level = '無風險';
+        color = '#2ecc71';
+    }
+    
+    levelElement.textContent = level;
+    levelElement.style.color = color;
+    
+    // 更新進度條
+    const progressBar = element.querySelector('.progress-fill');
+    progressBar.style.width = `${score}%`;
+    progressBar.style.backgroundColor = color;
 }
 
 // 報告URL函數
