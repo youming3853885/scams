@@ -2,26 +2,142 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const puppeteer = require('puppeteer');
-const { OpenAI } = require('openai');
+const { Configuration, OpenAIApi } = require('openai');
 const path = require('path');
+const fs = require('fs');
+const winston = require('winston');
+const rateLimit = require('express-rate-limit');
+const https = require('https');
 require('dotenv').config();
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+// 服務器配置
+const PORT = process.env.SERVER_PORT || 3000;
+const ENABLE_HTTPS = process.env.ENABLE_HTTPS === 'true';
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || './certs/cert.pem';
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || './certs/key.pem';
 
-// 中間件
-app.use(cors());
-app.use(express.json());
+// API配置
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4-turbo';
+const API_TIMEOUT = parseInt(process.env.API_TIMEOUT || '60000');
+
+// 代理配置
+const USE_PROXY = process.env.USE_PROXY === 'true';
+const PROXY_SERVER = process.env.PROXY_SERVER || '';
+const PROXY_AUTH_USERNAME = process.env.PROXY_AUTH_USERNAME || '';
+const PROXY_AUTH_PASSWORD = process.env.PROXY_AUTH_PASSWORD || '';
+
+// 安全配置
+const MAX_URLS_PER_DAY = parseInt(process.env.MAX_URLS_PER_DAY || '100');
+const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '86400000');
+const MAX_CONCURRENT_REQUESTS = parseInt(process.env.MAX_CONCURRENT_REQUESTS || '5');
+const CORS_ALLOWED_ORIGINS = process.env.CORS_ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'];
+
+// 網頁抓取配置
+const PAGE_LOAD_TIMEOUT = parseInt(process.env.PAGE_LOAD_TIMEOUT || '30000');
+const ENABLE_JAVASCRIPT = process.env.ENABLE_JAVASCRIPT !== 'false';
+const BROWSER_WIDTH = parseInt(process.env.BROWSER_WIDTH || '1280');
+const BROWSER_HEIGHT = parseInt(process.env.BROWSER_HEIGHT || '800');
+
+// 日誌配置
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+const LOG_FILE_PATH = process.env.LOG_FILE_PATH || './logs/app.log';
+const LOG_RETENTION_DAYS = parseInt(process.env.LOG_RETENTION_DAYS || '30');
+const CONSOLE_LOGGING = process.env.CONSOLE_LOGGING !== 'false';
+
+// 快取配置
+const ENABLE_CACHE = process.env.ENABLE_CACHE === 'true';
+const CACHE_TTL = parseInt(process.env.CACHE_TTL || '3600');
+const MAX_CACHE_ITEMS = parseInt(process.env.MAX_CACHE_ITEMS || '1000');
+
+// 初始化Express應用
+const app = express();
+
+// 設置CORS
+app.use(cors({
+  origin: CORS_ALLOWED_ORIGINS,
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, '.')));
 
-// 初始化 OpenAI API 客戶端
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+// 初始化OpenAI API客戶端
+const openai = new OpenAIApi(new Configuration({
+  apiKey: OPENAI_API_KEY,
+}));
+
+// 簡單的內存快取實現
+let cache = {};
+if (ENABLE_CACHE) {
+  // 清理過期快取項目的定時任務
+  setInterval(() => {
+    const now = Date.now();
+    Object.keys(cache).forEach(key => {
+      if (cache[key].expiry < now) {
+        delete cache[key];
+      }
+    });
+  }, 60000); // 每分鐘清理一次
+}
+
+// 設置並發請求隊列
+let activeRequests = 0;
+const requestQueue = [];
+
+// 添加速率限制
+const apiLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: MAX_URLS_PER_DAY,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: '已超過今日掃描限制，請明天再試。' }
+});
+
+// 將速率限制應用到掃描API
+app.use('/api/scan', apiLimiter);
+
+// 設置日誌系統
+const logDir = path.dirname(LOG_FILE_PATH);
+if (!fs.existsSync(logDir)) {
+  fs.mkdirSync(logDir, { recursive: true });
+}
+
+const logTransports = [];
+if (CONSOLE_LOGGING) {
+  logTransports.push(new winston.transports.Console({
+    format: winston.format.combine(
+      winston.format.colorize(),
+      winston.format.simple()
+    )
+  }));
+}
+
+logTransports.push(new winston.transports.File({ 
+  filename: LOG_FILE_PATH,
+  maxFiles: LOG_RETENTION_DAYS,
+  maxsize: 5242880, // 5MB
+  tailable: true
+}));
+
+const logger = winston.createLogger({
+  level: LOG_LEVEL,
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: logTransports
 });
 
 // 處理根路徑請求
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// 處理健康檢查請求
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // 掃描網站 API 端點
@@ -31,6 +147,41 @@ app.post('/api/scan', async (req, res) => {
     if (!url) {
       return res.status(400).json({ error: '請提供有效的網址' });
     }
+
+    // 檢查快取
+    if (ENABLE_CACHE) {
+      const cacheKey = `scan:${url}`;
+      if (cache[cacheKey] && cache[cacheKey].expiry > Date.now()) {
+        logger.info(`從快取返回分析: ${url}`);
+        return res.json(cache[cacheKey].data);
+      }
+    }
+
+    // 檢查並發請求數
+    if (activeRequests >= MAX_CONCURRENT_REQUESTS) {
+      // 將請求添加到隊列中
+      return new Promise((resolve, reject) => {
+        requestQueue.push(() => {
+          processScanRequest(url, req, res)
+            .then(resolve)
+            .catch(reject);
+        });
+      });
+    }
+
+    await processScanRequest(url, req, res);
+
+  } catch (error) {
+    logger.error(`掃描失敗: ${error.message}`, { stack: error.stack });
+    res.status(500).json({ error: '掃描過程中發生錯誤', details: error.message });
+  }
+});
+
+// 處理單個掃描請求
+async function processScanRequest(url, req, res) {
+  activeRequests++;
+  try {
+    logger.info(`開始掃描網址: ${url}`);
 
     // 1. 獲取網站截圖和內容
     const { screenshot, content, metadata } = await getWebsiteData(url);
@@ -44,34 +195,100 @@ app.post('/api/scan', async (req, res) => {
     // 4. 構建並返回結果
     const result = {
       url,
-      screenshot: `data:image/jpeg;base64,${screenshot}`,
+      screenshot: screenshot ? `data:image/jpeg;base64,${screenshot}` : null,
       analysis,
       markers,
       scanTime: new Date().toISOString()
     };
     
+    // 儲存到快取
+    if (ENABLE_CACHE) {
+      const cacheKey = `scan:${url}`;
+      cache[cacheKey] = {
+        data: result,
+        expiry: Date.now() + (CACHE_TTL * 1000)
+      };
+      
+      // 檢查快取大小
+      if (Object.keys(cache).length > MAX_CACHE_ITEMS) {
+        // 移除最舊的項目
+        const oldestKey = Object.keys(cache).sort((a, b) => 
+          cache[a].expiry - cache[b].expiry
+        )[0];
+        if (oldestKey) delete cache[oldestKey];
+      }
+    }
+    
+    logger.info(`掃描完成: ${url}, 風險分數: ${analysis.riskScore}`);
     res.json(result);
   } catch (error) {
-    console.error('掃描失敗:', error);
+    logger.error(`掃描失敗: ${error.message}`, { stack: error.stack });
     res.status(500).json({ error: '掃描過程中發生錯誤', details: error.message });
+  } finally {
+    activeRequests--;
+    
+    // 檢查隊列中是否有等待的請求
+    if (requestQueue.length > 0 && activeRequests < MAX_CONCURRENT_REQUESTS) {
+      const nextRequest = requestQueue.shift();
+      nextRequest();
+    }
   }
-});
+}
 
 // 獲取網站數據（截圖和內容）
 async function getWebsiteData(url) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
-  
+  let browser = null;
+  let page = null;
   try {
-    const page = await browser.newPage();
+    logger.info(`正在開始分析網站: ${url}`);
     
-    // 設置視窗大小
-    await page.setViewport({ width: 1280, height: 800 });
+    const launchOptions = {
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        `--window-size=${BROWSER_WIDTH},${BROWSER_HEIGHT}`
+      ],
+      timeout: API_TIMEOUT
+    };
     
-    // 導航到URL
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    // 如果啟用了代理，添加代理設置
+    if (USE_PROXY && PROXY_SERVER) {
+      logger.info(`使用代理服務器: ${PROXY_SERVER}`);
+      launchOptions.args.push(`--proxy-server=${PROXY_SERVER}`);
+      
+      // 如果有代理驗證，設置代理驗證
+      if (PROXY_AUTH_USERNAME && PROXY_AUTH_PASSWORD) {
+        launchOptions.args.push(`--proxy-auth=${PROXY_AUTH_USERNAME}:${PROXY_AUTH_PASSWORD}`);
+      }
+    }
+    
+    browser = await puppeteer.launch(launchOptions);
+
+    logger.debug('Puppeteer 啟動成功，創建新頁面...');
+    page = await browser.newPage();
+    
+    // 設置頁面視窗大小
+    await page.setViewport({ width: BROWSER_WIDTH, height: BROWSER_HEIGHT });
+    
+    // 設置用戶代理
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    
+    // 如果禁用JavaScript
+    if (!ENABLE_JAVASCRIPT) {
+      await page.setJavaScriptEnabled(false);
+    }
+    
+    // 提高導航超時
+    logger.debug(`正在導航到 ${url}...`);
+    await page.goto(url, { 
+      waitUntil: 'networkidle2', 
+      timeout: PAGE_LOAD_TIMEOUT 
+    });
+    logger.debug('頁面導航完成');
     
     // 獲取截圖
     const screenshot = await page.screenshot({ 
@@ -141,8 +358,45 @@ async function getWebsiteData(url) {
       content,
       metadata
     };
+  } catch (error) {
+    logger.error('獲取網站數據時發生錯誤:', error);
+    
+    // 記錄更詳細的錯誤信息
+    if (error.message) {
+      logger.error('錯誤信息:', error.message);
+    }
+    if (error.stack) {
+      logger.error('錯誤堆棧:', error.stack);
+    }
+    
+    return {
+      screenshot: null,
+      content: {
+        bodyText: `無法獲取內容: ${error.message}`,
+        forms: [],
+        links: [],
+        buttons: [],
+        alerts: [],
+        title: url,
+        url: url
+      },
+      metadata: {
+        title: url,
+        description: null,
+        keywords: null,
+        author: null,
+        siteName: null
+      }
+    };
   } finally {
-    await browser.close();
+    try {
+      // 確保資源得到正確釋放
+      if (page) await page.close();
+      if (browser) await browser.close();
+      logger.debug('Puppeteer 資源已釋放');
+    } catch (closeError) {
+      logger.error('關閉瀏覽器時發生錯誤:', closeError);
+    }
   }
 }
 
@@ -150,8 +404,8 @@ async function getWebsiteData(url) {
 async function analyzeFraudRisk(url, content, metadata) {
   try {
     // 使用 OpenAI 進行詐騙風險分析
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+    const completion = await openai.createChatCompletion({
+      model: OPENAI_MODEL,
       messages: [
         {
           role: "system",
@@ -200,10 +454,12 @@ async function analyzeFraudRisk(url, content, metadata) {
         }
       ],
       temperature: 0.7,
-      response_format: { type: "json_object" }
+      max_tokens: 800,
+      response_format: { type: "json_object" },
+      timeout: API_TIMEOUT
     });
 
-    const analysisResult = JSON.parse(completion.choices[0].message.content);
+    const analysisResult = JSON.parse(completion.data.choices[0].message.content);
     
     // 為避免結果不符合預期格式的問題，確保所有字段都存在
     return {
@@ -214,7 +470,7 @@ async function analyzeFraudRisk(url, content, metadata) {
       safetyAdvice: analysisResult.safetyAdvice || []
     };
   } catch (error) {
-    console.error('分析詐騙風險時出錯:', error);
+    logger.error('分析詐騙風險時出錯:', error);
     
     // 檢查是否是配額不足錯誤
     const isQuotaError = error.code === 'insufficient_quota' || 
@@ -262,8 +518,8 @@ async function identifySuspiciousAreas(screenshot, content, analysis) {
     
     // 使用 OpenAI 視覺分析來標記可疑區域
     const indicators = analysis.indicators.join(", ");
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+    const completion = await openai.createChatCompletion({
+      model: OPENAI_MODEL,
       messages: [
         {
           role: "system",
@@ -299,16 +555,18 @@ async function identifySuspiciousAreas(screenshot, content, analysis) {
         }
       ],
       temperature: 0.7,
-      response_format: { type: "json_object" }
+      max_tokens: 800,
+      response_format: { type: "json_object" },
+      timeout: API_TIMEOUT
     });
 
     try {
       // 嘗試解析返回的JSON響應
-      const markersResponse = JSON.parse(completion.choices[0].message.content);
+      const markersResponse = JSON.parse(completion.data.choices[0].message.content);
       return Array.isArray(markersResponse) ? markersResponse : 
              (markersResponse.markers || []);
     } catch (error) {
-      console.error('解析標記數據時出錯:', error);
+      logger.error('解析標記數據時出錯:', error);
       
       // 如果解析失敗，生成一些合理的標記
       // 根據分析結果創建1-3個隨機位置的標記
@@ -328,7 +586,7 @@ async function identifySuspiciousAreas(screenshot, content, analysis) {
       return randomMarkers;
     }
   } catch (error) {
-    console.error('識別可疑區域時出錯:', error);
+    logger.error('識別可疑區域時出錯:', error);
     // 返回基於分析的簡單標記
     if (analysis.riskScore >= 70) {
       return [
@@ -340,6 +598,26 @@ async function identifySuspiciousAreas(screenshot, content, analysis) {
 }
 
 // 啟動服務器
-app.listen(PORT, () => {
-  console.log(`服務器運行在 http://localhost:${PORT}`);
-}); 
+if (ENABLE_HTTPS) {
+  try {
+    const httpsOptions = {
+      key: fs.readFileSync(SSL_KEY_PATH),
+      cert: fs.readFileSync(SSL_CERT_PATH)
+    };
+    
+    https.createServer(httpsOptions, app).listen(PORT, () => {
+      logger.info(`HTTPS 服務器運行在 https://localhost:${PORT}`);
+    });
+  } catch (error) {
+    logger.error(`無法啟動HTTPS服務器: ${error.message}`);
+    logger.info('回退到HTTP模式...');
+    
+    app.listen(PORT, () => {
+      logger.info(`HTTP 服務器運行在 http://localhost:${PORT}`);
+    });
+  }
+} else {
+  app.listen(PORT, () => {
+    logger.info(`HTTP 服務器運行在 http://localhost:${PORT}`);
+  });
+} 

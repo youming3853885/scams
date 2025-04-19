@@ -84,20 +84,46 @@ async function scanWebsite(url) {
         // 更新載入狀態
         updateLoadingStatus('正在獲取網站資訊...', 20);
         
-        // 調用後端API
-        const response = await fetch('/api/scan', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ url })
+        // 設置請求超時
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('請求超時，網站可能無法訪問')), 60000);
         });
+        
+        // 同時等待請求和超時
+        const response = await Promise.race([
+            fetch('/api/scan', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ url })
+            }).catch(error => {
+                console.error('Fetch錯誤詳情:', error);
+                throw new Error(`網路請求失敗: ${error.message}`);
+            }),
+            timeoutPromise
+        ]);
         
         updateLoadingStatus('正在分析網站內容...', 50);
         
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || '掃描過程中發生錯誤');
+            // 嘗試獲取詳細的錯誤信息
+            let errorDetail = '伺服器錯誤';
+            try {
+                const errorData = await response.json();
+                errorDetail = errorData.error || `伺服器錯誤 (${response.status}): ${response.statusText}`;
+                
+                // 處理特定錯誤類型
+                if (response.status === 429) {
+                    errorDetail = '已超過今日掃描限制，請明天再試';
+                } else if (response.status === 503) {
+                    errorDetail = '伺服器負載過高，請稍後再試';
+                }
+            } catch (e) {
+                errorDetail = `伺服器錯誤 (${response.status}): ${response.statusText}`;
+            }
+            
+            throw new Error(errorDetail);
         }
         
         updateLoadingStatus('正在生成風險評估報告...', 80);
@@ -119,13 +145,50 @@ async function scanWebsite(url) {
         }, 500);
     } catch (error) {
         console.error('掃描失敗:', error);
-        updateLoadingStatus(`掃描失敗: ${error.message}`, 100);
         
-        // 返回首頁並顯示錯誤
-        setTimeout(() => {
-            goToHome();
-            showError(`掃描失敗: ${error.message}`);
-        }, 2000);
+        // 根據錯誤類型設置不同的錯誤信息
+        let errorMessage = error.message;
+        
+        // 針對常見錯誤類型提供更友好的提示
+        if (errorMessage.includes('網路請求失敗') || errorMessage.includes('請求超時')) {
+            errorMessage = `無法連接到伺服器或目標網站: ${errorMessage}`;
+        } else if (errorMessage.includes('API配額')) {
+            errorMessage = '分析API配額已用盡，請稍後再試';
+        }
+        
+        updateLoadingStatus(`掃描失敗: ${errorMessage}`, 100);
+        
+        // 添加重試按鈕
+        const loadingContainer = document.querySelector('.loading-container');
+        
+        // 檢查是否已經有重試按鈕
+        let retryButton = document.querySelector('#retry-button');
+        if (!retryButton) {
+            retryButton = document.createElement('button');
+            retryButton.id = 'retry-button';
+            retryButton.innerHTML = '<i class="fas fa-redo"></i> 重新掃描';
+            retryButton.addEventListener('click', () => {
+                // 移除重試按鈕
+                retryButton.remove();
+                // 重新調用掃描
+                scanWebsite(url);
+            });
+            loadingContainer.appendChild(retryButton);
+        }
+        
+        // 添加返回按鈕
+        let backButton = document.querySelector('#loading-back-button');
+        if (!backButton) {
+            backButton = document.createElement('button');
+            backButton.id = 'loading-back-button';
+            backButton.className = 'secondary-button';
+            backButton.innerHTML = '<i class="fas fa-arrow-left"></i> 返回首頁';
+            backButton.addEventListener('click', () => {
+                goToHome();
+                showError(errorMessage);
+            });
+            loadingContainer.appendChild(backButton);
+        }
     }
 }
 
@@ -138,6 +201,10 @@ function displayAnalysisResults(result) {
     const scanDate = new Date(result.scanTime);
     const formattedTime = `${scanDate.getFullYear()}-${padZero(scanDate.getMonth() + 1)}-${padZero(scanDate.getDate())} ${padZero(scanDate.getHours())}:${padZero(scanDate.getMinutes())}`;
     document.getElementById('scan-time').textContent = formattedTime;
+    
+    // 清除任何現有的API警告
+    const existingWarnings = document.querySelectorAll('.api-warning');
+    existingWarnings.forEach(warning => warning.remove());
     
     // 檢查是否為模擬數據
     if (result.analysis.isSimulatedData) {
@@ -222,52 +289,7 @@ function updateScamFeatures(analysis) {
     }
 }
 
-// 更新詳細分析頁面
-function updateDetailedAnalysis(analysis) {
-    // 更新詳細卡片
-    const detailsContent = document.querySelector('.details-content');
-    detailsContent.innerHTML = ''; // 清空現有內容
-    
-    // 定義風險類別及其相應的圖標
-    const riskCategories = [
-        { name: '身份驗證風險', icon: 'fa-fingerprint', level: analysis.riskScore > 60 ? 'high-risk' : 'medium-risk', description: '評估網站身份驗證的可信度和安全性。' },
-        { name: '資料安全', icon: 'fa-lock', level: analysis.riskScore > 70 ? 'high-risk' : 'medium-risk', description: '評估網站如何處理和保護用戶數據。' },
-        { name: '網站可信度', icon: 'fa-history', level: analysis.riskScore > 50 ? 'high-risk' : 'low-risk', description: '評估網站的整體真實性和可信度。' },
-        { name: '內容分析', icon: 'fa-comment-alt', level: analysis.riskScore > 40 ? 'high-risk' : 'medium-risk', description: '評估網站內容中的詐騙指標。' }
-    ];
-    
-    // 生成風險類別卡片
-    riskCategories.forEach((category, index) => {
-        const detailCard = document.createElement('div');
-        detailCard.className = 'detail-card';
-        
-        const fillWidth = category.level === 'high-risk' ? 90 : (category.level === 'medium-risk' ? 60 : 30);
-        
-        detailCard.innerHTML = `
-            <h3><i class="fas ${category.icon}"></i> ${category.name}</h3>
-            <div class="risk-meter ${category.level}">
-                <div class="meter-fill" style="width: ${fillWidth}%"></div>
-                <span>${category.level === 'high-risk' ? '高風險' : (category.level === 'medium-risk' ? '中風險' : '低風險')}</span>
-            </div>
-            <p>${analysis.indicators[index] || category.description}</p>
-        `;
-        
-        detailsContent.appendChild(detailCard);
-    });
-    
-    // 更新安全建議
-    const tipsList = document.querySelector('.tips-section ul');
-    tipsList.innerHTML = ''; // 清空現有內容
-    
-    // 添加安全建議
-    analysis.safetyAdvice.forEach(advice => {
-        const li = document.createElement('li');
-        li.textContent = advice;
-        tipsList.appendChild(li);
-    });
-}
-
-// 補零函數（用於日期格式化）
+// 添加兩位數格式化函數
 function padZero(num) {
     return num.toString().padStart(2, '0');
 }
@@ -392,6 +414,51 @@ function fallbackShare(text) {
     document.body.removeChild(input);
     
     alert('分享文本已複製到剪貼板!');
+}
+
+// 更新詳細分析頁面
+function updateDetailedAnalysis(analysis) {
+    // 更新詳細卡片
+    const detailsContent = document.querySelector('.details-content');
+    detailsContent.innerHTML = ''; // 清空現有內容
+    
+    // 定義風險類別及其相應的圖標
+    const riskCategories = [
+        { name: '身份驗證風險', icon: 'fa-fingerprint', level: analysis.riskScore > 60 ? 'high-risk' : 'medium-risk', description: '評估網站身份驗證的可信度和安全性。' },
+        { name: '資料安全', icon: 'fa-lock', level: analysis.riskScore > 70 ? 'high-risk' : 'medium-risk', description: '評估網站如何處理和保護用戶數據。' },
+        { name: '網站可信度', icon: 'fa-history', level: analysis.riskScore > 50 ? 'high-risk' : 'low-risk', description: '評估網站的整體真實性和可信度。' },
+        { name: '內容分析', icon: 'fa-comment-alt', level: analysis.riskScore > 40 ? 'high-risk' : 'medium-risk', description: '評估網站內容中的詐騙指標。' }
+    ];
+    
+    // 生成風險類別卡片
+    riskCategories.forEach((category, index) => {
+        const detailCard = document.createElement('div');
+        detailCard.className = 'detail-card';
+        
+        const fillWidth = category.level === 'high-risk' ? 90 : (category.level === 'medium-risk' ? 60 : 30);
+        
+        detailCard.innerHTML = `
+            <h3><i class="fas ${category.icon}"></i> ${category.name}</h3>
+            <div class="risk-meter ${category.level}">
+                <div class="meter-fill" style="width: ${fillWidth}%"></div>
+                <span>${category.level === 'high-risk' ? '高風險' : (category.level === 'medium-risk' ? '中風險' : '低風險')}</span>
+            </div>
+            <p>${analysis.indicators[index] || category.description}</p>
+        `;
+        
+        detailsContent.appendChild(detailCard);
+    });
+    
+    // 更新安全建議
+    const tipsList = document.querySelector('.tips-section ul');
+    tipsList.innerHTML = ''; // 清空現有內容
+    
+    // 添加安全建議
+    analysis.safetyAdvice.forEach(advice => {
+        const li = document.createElement('li');
+        li.textContent = advice;
+        tipsList.appendChild(li);
+    });
 }
 
 // 初始化頁面

@@ -568,22 +568,87 @@ button:hover {
     }
 }
 
-/* API配額不足警告樣式 */
+/* API警告樣式 */
 .api-warning {
     background-color: rgba(243, 156, 18, 0.1);
     border-left: 4px solid var(--warning-color);
-    color: #7f5308;
-    padding: 12px 15px;
-    margin-bottom: 20px;
+    color: var(--warning-color);
+    padding: 15px;
+    margin: 15px 0;
     border-radius: var(--border-radius);
     display: flex;
     align-items: center;
     gap: 10px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    animation: fadeIn 0.5s ease;
 }
 
 .api-warning i {
-    color: var(--warning-color);
     font-size: 1.2rem;
+}
+
+/* 載入頁面按鈕樣式 */
+#retry-button, #loading-back-button {
+    margin-top: 20px;
+    margin-right: 10px;
+    margin-left: 10px;
+    font-size: 1rem;
+    padding: 12px 25px;
+    transition: all 0.3s ease;
+}
+
+#retry-button {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+#retry-button:hover {
+    background-color: #2951c3;
+    transform: translateY(-2px);
+}
+
+#loading-back-button {
+    background-color: transparent;
+    color: var(--text-color);
+    border: 1px solid #ccc;
+}
+
+#loading-back-button:hover {
+    background-color: #f1f1f1;
+    border-color: #999;
+}
+
+/* 淡入動畫 */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* 確保按鈕在錯誤狀態下仍然排列得好看 */
+.loading-container button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 10px 5px;
+}
+
+.secondary-button {
+    background-color: transparent !important;
+    color: var(--text-color) !important;
+    border: 1px solid #ccc !important;
+}
+
+.secondary-button:hover {
+    background-color: #f1f1f1 !important;
+    border-color: #999 !important;
+}
+
+/* 錯誤狀態增強樣式 */
+.status.error {
+    color: var(--danger-color);
+    font-weight: 500;
 }
 
 /* 增加截圖滾動條的樣式 */
