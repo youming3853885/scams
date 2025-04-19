@@ -4,7 +4,7 @@
  */
 
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { execSync, exec } = require('child_process');
 const path = require('path');
 
 // 設置日誌目錄
@@ -47,119 +47,136 @@ function initializeEnvironment() {
     process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
     console.log('✅ 設置 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true');
     
-    // 檢查 Chromium 是否已安裝
+    // 檢查瀏覽器是否已安裝
     try {
-      console.log('🔍 檢查 Chromium 安裝狀態...');
+      console.log('🔍 檢查瀏覽器安裝狀態...');
       
       // 優先檢查的路徑
-      const chromiumPaths = [
+      const browserPaths = [
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chrome',
         '/usr/bin/chromium',
         '/usr/bin/chromium-browser',
-        '/usr/bin/google-chrome',
-        '/usr/bin/google-chrome-stable',
         '/opt/render/project/chrome-linux/chrome'
       ];
       
-      let chromiumFound = false;
-      let chromiumPath = '';
+      let browserFound = false;
+      let browserPath = '';
       
-      for (const checkPath of chromiumPaths) {
-        if (fs.existsSync(checkPath)) {
-          chromiumPath = checkPath;
-          chromiumFound = true;
-          console.log(`✅ 找到 Chromium: ${chromiumPath}`);
-          
-          // 設置 Puppeteer 執行路徑
-          process.env.PUPPETEER_EXECUTABLE_PATH = chromiumPath;
-          console.log(`✅ 設置 PUPPETEER_EXECUTABLE_PATH=${chromiumPath}`);
-          
-          // 檢查 Chromium 版本
-          try {
-            const versionOutput = execSync(`${chromiumPath} --version`).toString();
-            console.log(`ℹ️ Chromium 版本: ${versionOutput.trim()}`);
-          } catch (versionError) {
-            console.warn(`⚠️ 無法獲取 Chromium 版本: ${versionError.message}`);
-          }
-          
-          break;
+      // 獲取文件訪問權限信息
+      function getFilePermissions(filePath) {
+        try {
+          const stats = fs.statSync(filePath);
+          return {
+            exists: true,
+            mode: stats.mode.toString(8),
+            executable: !!(stats.mode & fs.constants.X_OK),
+            user: stats.uid,
+            group: stats.gid
+          };
+        } catch (err) {
+          return { exists: false, error: err.message };
         }
       }
       
-      // 如果未找到 Chromium，嘗試通過 which 命令查找
-      if (!chromiumFound) {
-        console.log('🔍 未在標準位置找到 Chromium，嘗試使用 which 命令查找...');
-        
-        try {
-          const whichOutput = execSync('which chromium || which google-chrome || which chrome').toString().trim();
+      for (const checkPath of browserPaths) {
+        if (fs.existsSync(checkPath)) {
+          browserPath = checkPath;
+          browserFound = true;
           
-          if (whichOutput && fs.existsSync(whichOutput)) {
-            chromiumPath = whichOutput;
-            chromiumFound = true;
-            console.log(`✅ 通過 which 命令找到 Chromium: ${chromiumPath}`);
+          // 檢查文件權限
+          const permissions = getFilePermissions(checkPath);
+          console.log(`✅ 找到瀏覽器: ${browserPath}`);
+          console.log(`📄 文件權限: mode=${permissions.mode}, 可執行=${permissions.executable}`);
+          
+          // 測試瀏覽器可執行性
+          try {
+            const versionOutput = execSync(`${browserPath} --version`).toString();
+            console.log(`✅ 瀏覽器可執行確認，版本: ${versionOutput.trim()}`);
             
             // 設置 Puppeteer 執行路徑
-            process.env.PUPPETEER_EXECUTABLE_PATH = chromiumPath;
-            console.log(`✅ 設置 PUPPETEER_EXECUTABLE_PATH=${chromiumPath}`);
+            process.env.PUPPETEER_EXECUTABLE_PATH = browserPath;
+            console.log(`✅ 設置 PUPPETEER_EXECUTABLE_PATH=${browserPath}`);
+            break;
+          } catch (execError) {
+            console.warn(`⚠️ 瀏覽器存在但無法執行: ${execError.message}`);
+            // 嘗試修復權限
+            try {
+              console.log(`🔧 嘗試修復 ${browserPath} 的權限`);
+              // 注意：在某些環境下這可能需要sudo權限
+              execSync(`chmod +x ${browserPath}`);
+              console.log('✅ 權限修復完成');
+            } catch (chmodError) {
+              console.error(`❌ 無法修復權限: ${chmodError.message}`);
+            }
+          }
+        }
+      }
+      
+      // 如果未找到瀏覽器，嘗試通過 which 命令查找
+      if (!browserFound) {
+        console.log('🔍 未在標準位置找到瀏覽器，嘗試使用 which 命令查找...');
+        
+        try {
+          const whichOutput = execSync('which google-chrome-stable || which google-chrome || which chrome || which chromium').toString().trim();
+          
+          if (whichOutput && fs.existsSync(whichOutput)) {
+            browserPath = whichOutput;
+            browserFound = true;
+            console.log(`✅ 通過 which 命令找到瀏覽器: ${browserPath}`);
+            
+            // 設置 Puppeteer 執行路徑
+            process.env.PUPPETEER_EXECUTABLE_PATH = browserPath;
+            console.log(`✅ 設置 PUPPETEER_EXECUTABLE_PATH=${browserPath}`);
           } else {
-            console.warn('⚠️ which 命令無法找到 Chromium');
+            console.warn('⚠️ which 命令無法找到瀏覽器');
           }
         } catch (whichError) {
           console.warn(`⚠️ 執行 which 命令時出錯: ${whichError.message}`);
         }
       }
       
-      // 如果仍未找到 Chromium，嘗試安裝
-      if (!chromiumFound) {
-        console.warn('⚠️ 未找到 Chromium，嘗試安裝必要依賴...');
+      // 特別偵測 Render 服務上 Chrome 的位置
+      if (!browserFound) {
+        console.log('🔍 嘗試檢測 Render 平台上的 Chrome 位置...');
         
+        // 嘗試在系統範圍內查找 chrome 文件
         try {
-          // 安裝 Chromium 依賴
-          console.log('🔧 執行: apt-get update && apt-get install -y chromium');
-          execSync('apt-get update && apt-get install -y chromium fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 --no-install-recommends', 
-            { stdio: 'inherit' });
+          const findChromeOutput = execSync('find / -name "chrome" -type f 2>/dev/null || find / -name "google-chrome*" -type f 2>/dev/null || echo ""').toString().trim().split('\n');
           
-          if (fs.existsSync('/usr/bin/chromium')) {
-            chromiumPath = '/usr/bin/chromium';
-            console.log(`✅ Chromium 安裝成功，路徑: ${chromiumPath}`);
+          if (findChromeOutput && findChromeOutput.length > 0 && findChromeOutput[0]) {
+            browserPath = findChromeOutput[0];
+            browserFound = true;
+            console.log(`✅ 通過系統查找找到瀏覽器: ${browserPath}`);
             
             // 設置 Puppeteer 執行路徑
-            process.env.PUPPETEER_EXECUTABLE_PATH = chromiumPath;
-            console.log(`✅ 設置 PUPPETEER_EXECUTABLE_PATH=${chromiumPath}`);
+            process.env.PUPPETEER_EXECUTABLE_PATH = browserPath;
+            console.log(`✅ 設置 PUPPETEER_EXECUTABLE_PATH=${browserPath}`);
           } else {
-            console.error('❌ Chromium 安裝後找不到可執行文件');
-            
-            // 嘗試查找安裝後的任何 Chrome 或 Chromium
-            try {
-              const findOutput = execSync('find /usr -name chrome -type f -executable || find /usr -name chromium -type f -executable').toString().trim().split('\n')[0];
-              
-              if (findOutput && fs.existsSync(findOutput)) {
-                chromiumPath = findOutput;
-                console.log(`✅ 通過 find 命令找到 Chrome: ${chromiumPath}`);
-                
-                // 設置 Puppeteer 執行路徑
-                process.env.PUPPETEER_EXECUTABLE_PATH = chromiumPath;
-                console.log(`✅ 設置 PUPPETEER_EXECUTABLE_PATH=${chromiumPath}`);
-              } else {
-                console.error('❌ 無法找到 Chrome 可執行文件');
-              }
-            } catch (findError) {
-              console.error(`❌ 查找 Chrome 可執行文件時出錯: ${findError.message}`);
-            }
+            console.warn('⚠️ 系統查找無法找到瀏覽器');
           }
-        } catch (installError) {
-          console.error('❌ 安裝依賴失敗:', installError.message);
+        } catch (findError) {
+          console.warn(`⚠️ 執行系統查找命令時出錯: ${findError.message}`);
         }
       }
       
       // 確認最終設置
       if (!process.env.PUPPETEER_EXECUTABLE_PATH) {
-        console.error('❌ 無法設置 PUPPETEER_EXECUTABLE_PATH，這可能導致 Puppeteer 無法運行');
-        // 設置一個后備执行路径
-        process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium';
-        console.log(`⚠️ 使用默認後備執行路徑: ${process.env.PUPPETEER_EXECUTABLE_PATH}`);
+        console.warn('⚠️ 未能找到可用的瀏覽器路徑，將使用 puppeteer 內置的瀏覽器');
+        console.log('💡 注意：Render 環境中可能需要依賴已預安裝的 Chrome');
+      } else {
+        console.log(`🔍 檢查設置的瀏覽器路徑: ${process.env.PUPPETEER_EXECUTABLE_PATH}`);
+        if (fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+          console.log('✅ 瀏覽器路徑存在');
+        } else {
+          console.error('❌ 警告: 設置的瀏覽器路徑不存在');
+          delete process.env.PUPPETEER_EXECUTABLE_PATH;
+          console.log('⚠️ 清除無效的路徑設置，使用 puppeteer 內置瀏覽器');
+        }
       }
-    } catch (chromiumError) {
-      console.error('❌ Chromium 檢查時出錯:', chromiumError.message);
+    } catch (browserError) {
+      console.error('❌ 瀏覽器檢查時出錯:', browserError.message);
     }
     
     // 記錄所有環境變數狀態

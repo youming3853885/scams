@@ -52,11 +52,11 @@ async function getBrowser() {
     
     if (!executablePath) {
       const possiblePaths = [
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chrome',
         '/usr/bin/chromium',
         '/usr/bin/chromium-browser',
-        '/usr/bin/google-chrome',
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/chrome',
         // Render 特定路徑
         '/opt/render/project/chrome-linux/chrome'
       ];
@@ -64,7 +64,7 @@ async function getBrowser() {
       for (const path of possiblePaths) {
         if (fs.existsSync(path)) {
           executablePath = path;
-          console.log(`✅ 自動檢測到Chromium路徑: ${executablePath}`);
+          console.log(`✅ 自動檢測到瀏覽器路徑: ${executablePath}`);
           // 動態設置環境變數，以便其他地方使用
           process.env.PUPPETEER_EXECUTABLE_PATH = executablePath;
           break;
@@ -72,28 +72,28 @@ async function getBrowser() {
       }
       
       if (!executablePath) {
-        console.warn('⚠️ 未找到Chromium可執行文件，嘗試獲取已安裝Chrome的路徑');
+        console.warn('⚠️ 未找到Chrome/Chromium可執行文件，嘗試獲取已安裝瀏覽器的路徑');
         
         try {
           // 嘗試使用which命令查找chrome
           const { execSync } = require('child_process');
-          const chromePath = execSync('which chromium || which google-chrome || which chrome').toString().trim();
+          const chromePath = execSync('which google-chrome-stable || which google-chrome || which chrome || which chromium').toString().trim();
           
           if (chromePath && fs.existsSync(chromePath)) {
             executablePath = chromePath;
             process.env.PUPPETEER_EXECUTABLE_PATH = executablePath;
-            console.log(`✅ 通過which命令找到Chrome路徑: ${executablePath}`);
+            console.log(`✅ 通過which命令找到瀏覽器路徑: ${executablePath}`);
           } else {
-            console.error('❌ 無法通過which命令找到Chrome，使用默認路徑');
-            executablePath = '/usr/bin/chromium';
+            console.error('❌ 無法通過which命令找到瀏覽器，使用默認路徑');
+            executablePath = '/usr/bin/google-chrome-stable'; // 更改默認路徑為google-chrome-stable
           }
         } catch (error) {
-          console.error(`❌ 嘗試查找Chrome時出錯: ${error.message}`);
-          executablePath = '/usr/bin/chromium'; // 使用默認路徑作為後備
+          console.error(`❌ 嘗試查找瀏覽器時出錯: ${error.message}`);
+          executablePath = '/usr/bin/google-chrome-stable'; // 更改默認路徑為google-chrome-stable
         }
       }
     } else {
-      console.log(`✅ 使用環境變數指定的Chromium路徑: ${executablePath}`);
+      console.log(`✅ 使用環境變數指定的瀏覽器路徑: ${executablePath}`);
     }
     
     console.log(`📝 最終使用的執行路徑: ${executablePath}`);
@@ -105,27 +105,33 @@ async function getBrowser() {
       
       try {
         const { execSync } = require('child_process');
-        // 嘗試安裝Chromium
-        execSync('apt-get update && apt-get install -y chromium', { stdio: 'inherit' });
-        console.log('✅ Chromium安裝完成');
+        // 嘗試安裝Google Chrome而不是Chromium
+        console.log('嘗試安裝Google Chrome...');
         
-        if (fs.existsSync('/usr/bin/chromium')) {
-          executablePath = '/usr/bin/chromium';
-          process.env.PUPPETEER_EXECUTABLE_PATH = executablePath;
-          console.log(`✅ 更新執行路徑為: ${executablePath}`);
-        }
+        // 由於Render限制，無法執行apt-get，這裡只輸出訊息，不執行安裝
+        console.log('⚠️ Render環境中無法自動安裝瀏覽器，請確保環境變數指向正確的可執行文件路徑');
+        
+        // 切換到使用puppeteer的預設路徑
+        console.log('切換為使用puppeteer預設瀏覽器');
+        executablePath = '';
       } catch (installError) {
         console.error(`❌ 安裝Chrome失敗: ${installError.message}`);
+        executablePath = ''; // 置空讓puppeteer使用自己的chrome
       }
     }
     
     // 使用puppeteer-core啟動瀏覽器
     try {
-      console.log('🚀 使用puppeteer-core啟動瀏覽器...');
-      launchOptions.executablePath = executablePath;
-      return await puppeteerCore.launch(launchOptions);
+      if (executablePath) {
+        console.log('🚀 使用puppeteer-core啟動瀏覽器...');
+        launchOptions.executablePath = executablePath;
+        return await puppeteerCore.launch(launchOptions);
+      } else {
+        console.log('🚀 路徑未指定，使用標準puppeteer啟動瀏覽器...');
+        return await puppeteer.launch(launchOptions);
+      }
     } catch (coreError) {
-      console.error(`❌ puppeteer-core啟動失敗: ${coreError.message}`);
+      console.error(`❌ 瀏覽器啟動失敗: ${coreError.message}`);
       console.error('⚠️ 嘗試使用標準puppeteer作為後備選項...');
       
       // 後備方案：使用標準puppeteer

@@ -20,7 +20,6 @@ const SSL_KEY_PATH = process.env.SSL_KEY_PATH || './certs/key.pem';
 // API配置
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4-turbo';
-const API_TIMEOUT = parseInt(process.env.API_TIMEOUT || '60000');
 
 // 代理配置
 const USE_PROXY = process.env.USE_PROXY === 'true';
