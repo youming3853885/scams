@@ -206,19 +206,32 @@ function displayAnalysisResults(result) {
     const existingWarnings = document.querySelectorAll('.api-warning');
     existingWarnings.forEach(warning => warning.remove());
     
-    // 檢查是否為模擬數據
+    // 檢查是否為模擬數據，並加入更多詳細信息
     if (result.analysis.isSimulatedData) {
         // 添加API配額不足的提示
         const warningBanner = document.createElement('div');
         warningBanner.className = 'api-warning';
+        
+        // 根據錯誤類型定制消息
+        let warningMessage = 'API配額不足，暫時顯示模擬數據。實際分析結果可能有所不同。';
+        if (result.analysis.errorType === 'api') {
+            warningMessage = 'API發生錯誤，暫時顯示模擬數據。請聯繫管理員檢查API配置。';
+        }
+        
         warningBanner.innerHTML = `
             <i class="fas fa-exclamation-triangle"></i>
-            <span>API配額不足，暫時顯示模擬數據。實際分析結果可能有所不同。</span>
+            <span>${warningMessage}</span>
+            <button id="retry-api-btn" class="small-button">重試</button>
         `;
         
         // 添加到結果容器的頂部
         const resultsContainer = document.querySelector('.results-container');
         resultsContainer.insertBefore(warningBanner, resultsContainer.firstChild);
+        
+        // 添加重試按鈕事件
+        document.getElementById('retry-api-btn').addEventListener('click', function() {
+            scanWebsite(result.url);
+        });
     }
     
     // 設置風險分數

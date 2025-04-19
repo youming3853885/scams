@@ -141,6 +141,83 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// 測試API連接
+app.get('/api/test-openai', async (req, res) => {
+  try {
+    logger.info('測試OpenAI API連接...');
+    
+    const completion = await openai.createChatCompletion({
+      model: "gpt-3.5-turbo",  // 使用較便宜的模型進行測試
+      messages: [
+        {role: "user", content: "Hello world"}
+      ],
+      max_tokens: 10
+    });
+    
+    if (completion.data && completion.data.choices && completion.data.choices.length > 0) {
+      logger.info('OpenAI API測試成功');
+      res.json({
+        status: 'success',
+        message: 'API連接正常',
+        model: OPENAI_MODEL,
+        responsePreview: completion.data.choices[0].message.content
+      });
+    } else {
+      throw new Error('API返回了異常的響應結構');
+    }
+  } catch (error) {
+    logger.error('OpenAI API測試失敗:', error);
+    
+    let errorMessage = 'API測試失敗';
+    let errorCode = 'unknown_error';
+    
+    if (error.response) {
+      errorCode = `status_${error.response.status}`;
+      errorMessage = `API響應錯誤: ${error.response.status} ${error.response.statusText}`;
+      if (error.response.data && error.response.data.error) {
+        errorMessage += ` - ${error.response.data.error.message || error.response.data.error}`;
+      }
+    } else if (error.message) {
+      errorMessage = error.message;
+      
+      if (error.message.includes('quota')) {
+        errorCode = 'quota_exceeded';
+      } else if (error.message.includes('key')) {
+        errorCode = 'invalid_api_key';
+      } else if (error.message.includes('network')) {
+        errorCode = 'network_error';
+      }
+    }
+    
+    res.status(500).json({
+      status: 'error',
+      message: errorMessage,
+      code: errorCode,
+      details: error.stack ? error.stack.split('\n').slice(0, 3).join('\n') : null
+    });
+  }
+});
+
+// 在服務器啟動前檢查API密鑰
+function validateAPIKey() {
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your_openai_api_key_here') {
+    logger.error('未設置有效的OpenAI API密鑰，系統將使用模擬數據');
+    return false;
+  }
+  
+  // 簡單檢查密鑰格式
+  if (!OPENAI_API_KEY.startsWith('sk-') || OPENAI_API_KEY.length < 20) {
+    logger.error('OpenAI API密鑰格式可能不正確，系統可能使用模擬數據');
+    return false;
+  }
+  
+  logger.info('OpenAI API密鑰格式驗證通過');
+  return true;
+}
+
+// 在應用初始化時調用
+const isValidAPIKey = validateAPIKey();
+
 // 掃描網站 API 端點
 app.post('/api/scan', async (req, res) => {
   try {
@@ -450,17 +527,32 @@ async function analyzeFraudRisk(url, content, metadata) {
   } catch (error) {
     logger.error('分析詐騙風險時出錯:', error);
     
-    // 檢查是否是配額不足錯誤
-    const isQuotaError = error.code === 'insufficient_quota' || 
-                         (error.response && error.response.status === 429);
+    // 詳細記錄API錯誤
+    if (error.response) {
+      logger.error('API響應錯誤:', {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data
+      });
+    }
+    
+    // 更精確地檢查是否是配額不足錯誤
+    const isQuotaError = 
+      (error.code === 'insufficient_quota') || 
+      (error.response && error.response.status === 429) ||
+      (error.message && error.message.includes('quota'));
+    
+    if (!isQuotaError) {
+      logger.error('非配額錯誤，可能是API密鑰錯誤或請求格式問題');
+    }
     
     // 返回模擬數據，並標記API問題
     return {
       riskScore: 75,
       riskLevel: '模擬數據',
-      fraudTypes: ['API配額不足', '顯示模擬數據'],
+      fraudTypes: [isQuotaError ? 'API配額不足' : 'API請求錯誤', '顯示模擬數據'],
       indicators: [
-        'API配額不足，顯示模擬分析結果',
+        isQuotaError ? 'API配額不足，顯示模擬分析結果' : `API錯誤: ${error.message || '未知錯誤'}`,
         '網站可能使用誘導性語言',
         '存在可疑的表單請求個人信息',
         '缺乏明確的隱私政策'
@@ -469,9 +561,10 @@ async function analyzeFraudRisk(url, content, metadata) {
         '請謹慎提供個人資料',
         '查看網站的安全連接(HTTPS)',
         '搜索網站的評價和評論',
-        'API配額不足，建議日後重新檢測'
+        isQuotaError ? 'API配額不足，建議日後重新檢測' : '系統錯誤，建議聯繫管理員'
       ],
-      isSimulatedData: true // 增加標記，表示這是模擬數據
+      isSimulatedData: true,
+      errorType: isQuotaError ? 'quota' : 'api' // 添加錯誤類型標記
     };
   }
 }
