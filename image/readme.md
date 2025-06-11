@@ -1,1 +1,10 @@
-![金瓜]()
+![金瓜](https://github.com/youming3853885/scams/blob/main/image/%E5%B7%B4%E6%A5%A0%E8%8A%B1/%E9%87%91%E7%93%9C.PNG)
+![野蔬](https://github.com/youming3853885/scams/blob/main/image/%E5%B7%B4%E6%A5%A0%E8%8A%B1/%E9%87%8E%E8%94%AC.PNG)
+![豬壯觀](https://github.com/youming3853885/scams/blob/main/image/%E5%B7%B4%E6%A5%A0%E8%8A%B1/%E8%B1%AC%E5%A3%AF%E8%A7%80.PNG)
+![樂多](https://github.com/youming3853885/scams/blob/main/image/%E5%B7%B4%E6%A5%A0%E8%8A%B1/%E6%A8%82%E5%A4%9A.PNG)
+![彩虹](https://github.com/youming3853885/scams/blob/main/image/%E5%B7%B4%E6%A5%A0%E8%8A%B1/%E6%89%8B%E6%8D%BB%E4%B8%80%E9%81%93%E5%BD%A9%E8%99%B9.PNG)
+![奶奶](https://github.com/youming3853885/scams/blob/main/image/%E5%B7%B4%E6%A5%A0%E8%8A%B1/%E5%A5%B6%E5%A5%B6%E7%9A%84VUS%E9%85%AA.PNG)
+![布丁](https://github.com/youming3853885/scams/blob/main/image/%E5%B7%B4%E6%A5%A0%E8%8A%B1/%E5%9C%B0%E7%93%9C%E5%B8%83%E4%B8%81.PNG)
+![吉拿棒](https://github.com/youming3853885/scams/blob/main/image/%E5%B7%B4%E6%A5%A0%E8%8A%B1/%E5%90%89%E6%8B%BF%E6%A3%92.PNG)
+![湯](https://github.com/youming3853885/scams/blob/main/image/%E5%B7%B4%E6%A5%A0%E8%8A%B1/%E5%8B%87%E5%A3%AB%E7%B2%BE%E5%8A%9B%E6%B9%AF.PNG)
+
